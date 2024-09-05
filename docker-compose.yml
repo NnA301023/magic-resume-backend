@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+ 
+  typesense:
+    container_name: typesense
+    image: typesense/typesense:27.0
+    ports:
+      - "8108:8108"
+    volumes:
+      - ./data:/data
+    command: '--data-dir /data --api-key=magic1337 --enable-cors'
+
+  fastapi:
+    build: .
+    container_name: backend-magic-resume
+    ports:
+      - "8192:8192"
+    environment:
+      - .env
