@@ -162,6 +162,9 @@ cython_debug/
 #.idea/
 
 core/temporary
-data/
+data/db
+data/meta
+data/models
+data/state
 *.zip
 *.csv
