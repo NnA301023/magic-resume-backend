@@ -111,6 +111,7 @@ async def get_recommendation(file: UploadFile = File(...)):
     resp_skill = extract_skill(text)
     skills = resp_skill["skill_extracted"]
     location = resp_skill["location"]
+    location = location.split(",")[0].strip()
     year_of_experience = resp_skill["year_of_experience"]
     job_title_relevan = resp_skill["job_title_relevan"]
     job_suggestion = search_similar_jobs(
