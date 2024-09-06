@@ -19,7 +19,6 @@ def search_similar_jobs(
         if len(filter_result) == max_result:
             break
         doc = _doc["document"]
-        doc.pop("id", None)
         filter_result.append(doc)
 
     return filter_result

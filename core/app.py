@@ -1,34 +1,27 @@
 import os
 import ast
 import typesense
+import instructor
 from typing import List
 from PyPDF2 import PdfReader
-from dotenv import load_dotenv
+from groq import Groq as GroqClient
 from llama_index.llms.groq import Groq
 from googleapiclient.discovery import build
-from core.utils.schema import ResponseSchema
 from fastapi import FastAPI, File, UploadFile
-from core.utils.search import search_similar_jobs
 from fastapi.middleware.cors import CORSMiddleware
 
-from core.utils.prompt import (
-    prompt_extract, 
-    prompt_skill_required
+from core.config import settings
+from core.utils.parser import PersonalInfo
+from core.utils.schema import ResponseSchema
+from core.utils.search import search_similar_jobs
+from core.utils.prompt import prompt_skill_required
+
+llm = Groq(model=settings.MODEL_NAME, api_key=settings.API_KEY)
+llm_parser = instructor.from_groq(
+    client=GroqClient(api_key=settings.API_KEY),
+    mode=instructor.Mode.JSON
 )
-
-load_dotenv()
-
-TS_HOST = os.getenv("TYPESENSE_HOST", None)
-TS_PORT = os.getenv("TYPESENSE_PORT", None)
-TS_KEY  = os.getenv("TYPESENSE_API_KEY", None)
-TS_COL  = os.getenv("TYPESENSE_COLLECTION", None)
-
-API_KEY = os.getenv("GROQ_API_KEY", None)
-MODEL_NAME = os.getenv("MODEL_NAME", None)
-YOUTUBE_KEY = os.getenv("YOUTUBE_API_KEY", None)
-
-llm = Groq(model=MODEL_NAME, api_key=API_KEY)
-youtube = build('youtube','v3', developerKey=YOUTUBE_KEY)
+youtube = build('youtube','v3', developerKey=settings.YOUTUBE_KEY)
 
 origins = ["*"]
 app = FastAPI()
@@ -42,14 +35,14 @@ app.add_middleware(
 
 client = typesense.Client({
     "nodes": [{
-        "host": TS_HOST,
-        "port": TS_PORT,
+        "host": settings.TS_HOST,
+        "port": settings.TS_PORT,
         "protocol": "http"
     }],
-    "api_key": TS_KEY,
+    "api_key": settings.TS_KEY,
     "connection_timeout": 5
 })
-client = client.collections[TS_COL]
+client = client.collections[settings.TS_COL]
 
 
 def youtube_search(query: str, max_results: int = 1, identifier: str = 'youtube#video') -> List[str]:
@@ -71,23 +64,16 @@ def youtube_search(query: str, max_results: int = 1, identifier: str = 'youtube#
     return videos
  
 def extract_skill(text_resume: str) -> List[str]:
+    response: PersonalInfo = llm_parser.chat.completions.create(
+        model=settings.MODEL_NAME, response_model=PersonalInfo,
+        messages=[{"role": "user", "content": text_resume}]
+    )
+    return response.__dict__
     
-    # TODO: Leverage Json Schema Parsing to prevent Out-of-Format Error.
-    response = llm.complete(prompt=prompt_extract.format(text=text_resume))
-    response = response.text.split("\n")
-    if len(response) == 4:
-        skills = ast.literal_eval(response[0].replace("skill_extracted: ", "").strip())
-        location = response[1].replace("location: ", "").strip().split(",")[0].strip()
-        year_of_experience = response[2].replace("year_of_experience: ", "").strip()
-        job_title_relevan = response[3].replace("job_title_relevan: ", "").strip()
-        return skills, location, year_of_experience, job_title_relevan
-    else:
-        print(response)
-        return "Failed to Parsing Entity from Resume..."
-    
-def suggest_skill(skills: List[str], year_of_exp: str, job_title: str) -> List[str]:
-
-    # TODO: Leverage Json Schema Parsing to prevent Out-of-Format Error.
+def suggest_skill(
+    skills: List[str], 
+    year_of_exp: str, job_title: str
+    ) -> List[str]:
     prompt_input = prompt_skill_required.format(
         skills=skills,
         year_of_experience=year_of_exp,
@@ -95,7 +81,11 @@ def suggest_skill(skills: List[str], year_of_exp: str, job_title: str) -> List[s
     )
     response = llm.complete(prompt=prompt_input)
     response = response.text
-    response = ast.literal_eval(response)
+    response = response.replace("skill_suggest: ", "")
+    try:
+        response = ast.literal_eval(response)
+    except Exception:
+        response = response.split(", ")
     return response
 
 @app.get("/")
@@ -106,8 +96,8 @@ async def root():
 @app.post("/get-recommendation")
 async def get_recommendation(file: UploadFile = File(...)):
 
-    # TODO: Budget Estimation
-    # TODO: Cover Letter Generator
+    # TODO: Budget Estimation.
+    # TODO: Job Application Scoring.
 
     file_path = os.path.join("core/temporary", file.filename)
     with open(file_path, "wb") as f:
@@ -118,13 +108,21 @@ async def get_recommendation(file: UploadFile = File(...)):
     for page in reader.pages:
         text += page.extract_text()
 
-    skills, location, year_of_experience, job_title_relevan = extract_skill(text)
+    resp_skill = extract_skill(text)
+    skills = resp_skill["skill_extracted"]
+    location = resp_skill["location"]
+    year_of_experience = resp_skill["year_of_experience"]
+    job_title_relevan = resp_skill["job_title_relevan"]
     job_suggestion = search_similar_jobs(
         client=client, 
         title=job_title_relevan, 
         skill=skills, location=location
     )
-    skill_suggest = suggest_skill(skills, year_of_experience, job_title_relevan)
+    skill_suggest = suggest_skill(
+        skills=skills, 
+        year_of_exp=year_of_experience, 
+        job_title=job_title_relevan
+    )
     course_suggests = {}
     for skill in skill_suggest:
         result = youtube_search(skill)
@@ -150,3 +148,5 @@ async def get_recommendation(file: UploadFile = File(...)):
     )
     
     return response
+
+# TODO: Cover Letter Generator
