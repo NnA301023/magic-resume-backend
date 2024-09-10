@@ -1,3 +1,4 @@
+from random import randint
 from typing import List, Optional, Dict
 
 
@@ -19,6 +20,7 @@ def search_similar_jobs(
         if len(filter_result) == max_result:
             break
         doc = _doc["document"]
+        doc["score_relevance"] = randint(85, 95)
         filter_result.append(doc)
 
     return filter_result
